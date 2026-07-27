@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+automind_env/
+
+# Environment Variables
+.env
+
+# VS Code
+.vscode/
+
+# Node Modules
+node_modules/
+
+# Build Files
+dist/
+build/
+
+# OS Files
+.DS_Store
+Thumbs.db
