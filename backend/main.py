@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.status import router as status_router
+from api.upload import router as upload_router
+
 app = FastAPI(title="AutoMind AI")
 
-# Allow React frontend to access FastAPI
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -12,18 +14,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def home():
-    return {
-        "message": "Welcome to AutoMind AI 🚗",
-        "status": "Backend Running Successfully"
-    }
-
-@app.get("/api/status")
-def get_status():
-    return {
-        "project": "AutoMind AI",
-        "backend": "Running",
-        "frontend": "Connected Soon",
-        "version": "1.0.0"
-    }
+app.include_router(status_router)
+app.include_router(upload_router)
