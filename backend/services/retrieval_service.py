@@ -1,6 +1,5 @@
 from config import DEFAULT_TOP_K
 
-
 # Number of chunks to retrieve for each intent
 INTENT_TOP_K = {
     "summary": 6,
@@ -17,5 +16,5 @@ def get_top_k(intent: str) -> int:
 
     return INTENT_TOP_K.get(
         intent,
-        DEFAULT_TOP_K
+        DEFAULT_TOP_K,
     )

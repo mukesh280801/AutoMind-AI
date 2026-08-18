@@ -1,25 +1,51 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 
-# Virtual Environment
+# Virtual environments
+.venv/
+venv/
 automind_env/
 
-# Environment Variables
+# Environment / secrets
 .env
+.env.*
 
-# VS Code
-.vscode/
-
-# Node Modules
+# Node
 node_modules/
 
-# Build Files
+# Build
 dist/
 build/
 
-# OS Files
+# Local databases / LangGraph checkpoints
+*.db
+*.db-shm
+*.db-wal
+
+# Uploaded documents
+backend/uploads/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test artifacts
+backend/stream_test.json
+
+# Local project/reference document
+AutoMind AI.docx

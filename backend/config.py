@@ -9,7 +9,7 @@ OLLAMA_MODEL = "llama3.2:3b"
 # Qdrant
 # ==========================
 QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
+QDRANT_PORT = 16333
 COLLECTION_NAME = "automind_docs"
 
 # ==========================

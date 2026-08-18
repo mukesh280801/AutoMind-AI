@@ -9,7 +9,7 @@ import uuid
 
 client = QdrantClient(
     host="localhost",
-    port=6333,
+    port=16333,
 )
 
 

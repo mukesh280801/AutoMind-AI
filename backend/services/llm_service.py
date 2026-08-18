@@ -3,176 +3,186 @@ import ollama
 from config import OLLAMA_MODEL
 
 
+NO_DOCUMENT_ANSWER = (
+    "I couldn't find that information in the uploaded documents."
+)
+
+
 # ============================================================
-# Generate Answer
+# SYSTEM PROMPT
+# ============================================================
+
+def build_system_prompt(
+    context: str,
+) -> str:
+
+    return f"""
+You are AutoMind AI.
+
+You are a document question-answering assistant.
+
+Your answer MUST be based ONLY on the provided document context.
+
+IMPORTANT RULES:
+
+1. Read the entire context before answering.
+
+2. Answer the user's CURRENT question.
+
+3. Use only facts explicitly present in the context.
+
+4. Do not use outside knowledge.
+
+5. Do not invent information.
+
+6. Do not guess.
+
+7. Do not infer facts that are not explicitly supported.
+
+8. If the question asks about projects, list the projects
+   explicitly mentioned in the context.
+
+9. If multiple project sections appear in the context,
+   combine them into one concise answer.
+
+10. If technologies are mentioned under a project,
+    include them only when they help answer the question.
+
+11. If the context does not contain information that directly
+    answers the question, respond EXACTLY:
+
+I couldn't find that information in the uploaded documents.
+
+12. Do not explain why information was missing.
+
+13. Do not mention the retrieval system, Qdrant, embeddings,
+    context, prompt, or internal pipeline.
+
+DOCUMENT CONTEXT
+================
+
+{context}
+
+================
+"""
+
+
+# ============================================================
+# NORMAL GENERATION
 # ============================================================
 
 def generate_answer(
     question: str,
     context: str,
-    history=None
+    history=None,
 ):
-    """
-    Generate a grounded response from the LLM.
-
-    The LLM must answer only from facts explicitly
-    supported by the retrieved context.
-    """
 
     if history is None:
         history = []
 
-    system_prompt = f"""
-You are AutoMind AI, a document-based question answering assistant.
-
-Your job is to answer the user's question using ONLY the
-information explicitly present in the provided context.
-
-STRICT GROUNDING RULES:
-
-1. Use ONLY facts explicitly stated in the context.
-
-2. Do NOT use outside knowledge.
-
-3. Do NOT guess, assume, or infer information.
-
-4. A related fact is NOT enough to answer the question.
-
-   Example:
-   If the context says:
-   "Python is one of Mukesh's programming languages."
-
-   And the user asks:
-   "What is Mukesh's favorite programming language?"
-
-   You MUST NOT answer "Python".
-
-   The context does not explicitly say that Python is his favorite.
-
-5. If the context does not explicitly contain the answer,
-   respond ONLY with:
-
-   "I couldn't find that information in the uploaded documents."
-
-6. Do not add an explanation after saying the information
-   was not found.
-
-7. Do not fabricate names, dates, scores, projects,
-   technologies, achievements, preferences, or other facts.
-
-8. When the context contains the answer, give a concise
-   answer based only on that context.
-
-Context:
---------------------
-{context}
---------------------
-"""
+    system_prompt = build_system_prompt(
+        context
+    )
 
     messages = [
         {
             "role": "system",
-            "content": system_prompt
+            "content": system_prompt,
         }
     ]
 
-    # Previous conversation
-    messages.extend(history)
+    # --------------------------------------------------------
+    # IMPORTANT
+    # --------------------------------------------------------
+    # History can sometimes contain previous answers that
+    # confuse document grounding.
+    #
+    # For now we keep it, but the system prompt tells the
+    # model to answer the CURRENT question from documents.
+    # --------------------------------------------------------
 
-    # Current question
+    messages.extend(
+        history
+    )
+
     messages.append(
         {
             "role": "user",
-            "content": question
+            "content": question,
         }
     )
 
     response = ollama.chat(
         model=OLLAMA_MODEL,
-        messages=messages
+        messages=messages,
     )
 
-    return response["message"]["content"]
+    answer = response[
+        "message"
+    ].get(
+        "content",
+        "",
+    )
+
+    if not answer:
+
+        return NO_DOCUMENT_ANSWER
+
+    return answer.strip()
 
 
 # ============================================================
-# Streaming Answer
+# STREAMING GENERATION
 # ============================================================
 
 def generate_answer_stream(
     question: str,
     context: str,
-    history=None
+    history=None,
 ):
-    """
-    Stream a grounded response from the LLM token by token.
-    """
 
     if history is None:
         history = []
 
-    system_prompt = f"""
-You are AutoMind AI, a document-based question answering assistant.
-
-Answer the user's question using ONLY information explicitly
-present in the provided context.
-
-STRICT GROUNDING RULES:
-
-1. Use only facts explicitly stated in the context.
-
-2. Never use outside knowledge.
-
-3. Never guess or infer missing information.
-
-4. Do not treat a related fact as proof of the requested fact.
-
-5. If the context does not explicitly answer the question,
-   respond ONLY with:
-
-   "I couldn't find that information in the uploaded documents."
-
-6. Do not add any additional information after saying
-   the information was not found.
-
-7. Do not fabricate facts.
-
-Context:
---------------------
-{context}
---------------------
-"""
+    system_prompt = build_system_prompt(
+        context
+    )
 
     messages = [
         {
             "role": "system",
-            "content": system_prompt
+            "content": system_prompt,
         }
     ]
 
-    # Previous conversation
-    messages.extend(history)
+    messages.extend(
+        history
+    )
 
-    # Current question
     messages.append(
         {
             "role": "user",
-            "content": question
+            "content": question,
         }
     )
 
     stream = ollama.chat(
         model=OLLAMA_MODEL,
         messages=messages,
-        stream=True
+        stream=True,
     )
 
     for chunk in stream:
 
-        content = chunk["message"].get(
-            "content",
-            ""
+        content = (
+            chunk[
+                "message"
+            ].get(
+                "content",
+                "",
+            )
         )
 
         if content:
+
             yield content

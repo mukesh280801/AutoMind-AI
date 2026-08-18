@@ -1,4 +1,22 @@
+import { useEffect, useState } from "react";
+import { getBackendStatus } from "../services/api";
+
 function Hero() {
+  const [status, setStatus] = useState<any>(null);
+
+  useEffect(() => {
+    async function fetchStatus() {
+      try {
+        const data = await getBackendStatus();
+        setStatus(data);
+      } catch (error) {
+        console.error("Error fetching backend status:", error);
+      }
+    }
+
+    fetchStatus();
+  }, []);
+
   return (
     <section className="flex flex-col items-center justify-center text-center px-6 pt-32 pb-24">
 
@@ -15,6 +33,29 @@ function Hero() {
         search technical knowledge, and automate engineering workflows
         using Generative AI, RAG, and AI Agents.
       </p>
+
+      {/* Backend Status Card */}
+      {status && (
+        <div className="mt-8 w-full max-w-xl rounded-xl bg-slate-800 p-6 shadow-lg">
+          <h3 className="text-2xl font-semibold text-cyan-400 mb-4">
+            Backend Status
+          </h3>
+
+          <div className="space-y-2 text-left">
+            <p>
+              <span className="font-semibold">Project:</span> {status.project}
+            </p>
+
+            <p>
+              <span className="font-semibold">Backend:</span> {status.backend}
+            </p>
+
+            <p>
+              <span className="font-semibold">Version:</span> {status.version}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="mt-10 flex gap-5">
 

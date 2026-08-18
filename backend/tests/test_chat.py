@@ -1,3 +1,4 @@
+import pytest
 import requests
 
 
@@ -25,18 +26,18 @@ TEST_QUESTIONS = [
     "What are Mukesh's areas of interest?",
 
     # Out-of-context question
-    "What is Mukesh's favorite programming language?"
+    "What is Mukesh's favorite programming language?",
 ]
 
 
-def test_question(question: str):
-
+@pytest.mark.parametrize("question", TEST_QUESTIONS)
+def test_question(question):
     response = requests.post(
         API_URL,
         json={
             "question": question
         },
-        timeout=120
+        timeout=120,
     )
 
     print("\n" + "=" * 70)
@@ -51,8 +52,4 @@ def test_question(question: str):
 
     print("=" * 70)
 
-
-if __name__ == "__main__":
-
-    for question in TEST_QUESTIONS:
-        test_question(question)
+    assert response.status_code == 200
