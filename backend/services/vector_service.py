@@ -65,7 +65,11 @@ def generate_point_id(chunk: str) -> str:
 # Store Embeddings
 # ==========================================
 
-def store_embeddings(chunks, embeddings):
+def store_embeddings(
+    chunks,
+    embeddings,
+    filename="unknown",
+):
 
     if not chunks:
         return 0
@@ -77,7 +81,9 @@ def store_embeddings(chunks, embeddings):
 
     points = []
 
-    for chunk, embedding in zip(chunks, embeddings):
+    for index, (chunk, embedding) in enumerate(
+        zip(chunks, embeddings)
+    ):
 
         point_id = generate_point_id(chunk)
 
@@ -87,6 +93,8 @@ def store_embeddings(chunks, embeddings):
                 vector=embedding,
                 payload={
                     "text": chunk,
+                    "filename": filename,
+                    "chunk_id": index,
                 },
             )
         )

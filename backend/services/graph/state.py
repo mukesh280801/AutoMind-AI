@@ -15,6 +15,8 @@ class AutoMindState(TypedDict, total=False):
 
     retrieval_scores: List[float]
 
+    retrieval_sources: List[dict]
+
     retrieval_found: bool
 
     compressed_context: str

@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
@@ -154,6 +156,7 @@ async def stream_chat(request: ChatRequest):
             detail="AutoMind AI failed to prepare the request."
         ) from exc
 
+
     def stream():
 
         full_answer = ""
@@ -169,6 +172,7 @@ async def stream_chat(request: ChatRequest):
                 full_answer += token
 
                 yield token
+
 
             add_message(
                 "user",
@@ -190,7 +194,12 @@ async def stream_chat(request: ChatRequest):
                 "V1 streaming generation failed"
             )
 
-            yield "\n\n[AutoMind AI error: response generation failed.]"
+            yield (
+                "\n\n"
+                "[AutoMind AI error: "
+                "response generation failed.]"
+            )
+
 
     return StreamingResponse(
         stream(),
@@ -222,7 +231,14 @@ async def chat_v2(request: V2ChatRequest):
             "thread_id": request.thread_id,
             "question": request.question,
             "intent": result.get("intent"),
-            "answer": result.get("answer", "")
+            "answer": result.get(
+                "answer",
+                ""
+            ),
+            "sources": result.get(
+                "retrieval_sources",
+                []
+            )
         }
 
     except Exception as exc:
@@ -239,7 +255,7 @@ async def chat_v2(request: V2ChatRequest):
 
 
 # =========================================================
-# V2 - LANGGRAPH STREAMING CHAT
+# V2 - LANGGRAPH TRUE STREAMING CHAT
 # =========================================================
 
 @router.post("/api/v2/chat/stream")
@@ -250,21 +266,38 @@ async def stream_chat_v2(request: V2ChatRequest):
         request.thread_id
     )
 
+
     def stream():
 
         try:
 
-            for token in stream_graph_chat(
+            # =================================================
+            # Get events from LangGraph streaming service
+            # =================================================
+
+            for event in stream_graph_chat(
                 question=request.question,
                 thread_id=request.thread_id
             ):
 
-                yield token
+                # =============================================
+                # Convert Python dictionary into NDJSON
+                # =============================================
+
+                yield (
+                    json.dumps(
+                        event,
+                        ensure_ascii=False
+                    )
+                    + "\n"
+                )
+
 
             logger.info(
                 "V2 streaming completed | thread=%s",
                 request.thread_id
             )
+
 
         except Exception:
 
@@ -273,9 +306,31 @@ async def stream_chat_v2(request: V2ChatRequest):
                 request.thread_id
             )
 
-            yield "\n\n[AutoMind AI error: response generation failed.]"
+
+            # =============================================
+            # Send error as NDJSON event
+            # =============================================
+
+            yield (
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": (
+                            "AutoMind AI failed "
+                            "to generate the response."
+                        )
+                    },
+                    ensure_ascii=False
+                )
+                + "\n"
+            )
+
+
+    # =====================================================
+    # Return NDJSON streaming response
+    # =====================================================
 
     return StreamingResponse(
         stream(),
-        media_type="text/plain"
+        media_type="application/x-ndjson"
     )

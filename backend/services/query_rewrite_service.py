@@ -1,54 +1,50 @@
-from services.memory_service import get_history
+def rewrite_question(question: str, history=None):
+    """
+    Rewrite a follow-up question using LangGraph conversation history.
 
+    Independent questions are returned unchanged.
 
-def rewrite_question(question: str):
+    Follow-up questions containing explicit references such as
+    "that project" or "this project" are expanded with the
+    previous user question so retrieval has enough context.
+    """
 
-    history = get_history()
+    if history is None:
+        history = []
 
     # No previous conversation
     if not history:
         return question
 
-    # Find the previous user question
+    # Find the most recent user question
     previous_user = ""
 
     for message in reversed(history):
-        if message["role"] == "user":
-            previous_user = message["content"]
+        if message.get("role") == "user":
+            previous_user = message.get("content", "").strip()
             break
 
     # No previous user question
     if not previous_user:
         return question
 
-    # Follow-up indicators
-    follow_up_words = [
-        "it",
-        "this",
-        "that",
-        "these",
-        "those",
-        "he",
-        "she",
-        "they",
-        "his",
-        "her",
-        "their",
-        "also",
-        "more",
-        "what about",
-        "how about",
-        "and"
-    ]
-
     question_lower = question.lower().strip()
 
-    # Rewrite only when the new question appears
-    # to depend on the previous question.
+    # Explicit follow-up references
+    follow_up_phrases = [
+        "that project",
+        "this project",
+        "the project",
+        "that one",
+        "this one",
+        "what about",
+        "how about",
+        "also",
+    ]
+
     is_follow_up = any(
-        question_lower.startswith(word + " ")
-        or question_lower == word
-        for word in follow_up_words
+        phrase in question_lower
+        for phrase in follow_up_phrases
     )
 
     if is_follow_up:
@@ -57,5 +53,5 @@ def rewrite_question(question: str):
             f"Follow-up question: {question}"
         )
 
-    # Independent question → keep it unchanged
+    # Independent question
     return question

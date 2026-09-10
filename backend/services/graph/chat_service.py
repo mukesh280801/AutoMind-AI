@@ -1,4 +1,5 @@
 from services.graph.workflow import build_graph
+from services.llm_service import generate_answer_stream
 
 
 # =========================================================
@@ -53,7 +54,7 @@ def process_graph_chat(
 
 
 # =========================================================
-# STREAMING V2 CHAT
+# TRUE STREAMING V2 CHAT
 # =========================================================
 
 def stream_graph_chat(
@@ -61,66 +62,179 @@ def stream_graph_chat(
     thread_id: str = "default",
 ):
     """
-    Execute the V2 LangGraph once and stream the final answer.
+    Run the V2 RAG graph up to the compression stage and
+    then stream the answer directly from Ollama.
 
-    Important:
-    The graph itself is executed only once.
+    Search flow:
 
-    We intentionally use graph.invoke() here instead of trying
-    to reconstruct Ollama token streaming through LangGraph.
-    This keeps the normal V2 grounding, memory, retrieval,
-    compression and response logic unchanged.
+        Memory
+          ↓
+        Intent
+          ↓
+        Rewrite
+          ↓
+        Retrieval
+          ↓
+        Compression
+          ↓
+        Ollama stream=True
+          ↓
+        Tokens
+
+    The function yields dictionaries so the API layer can
+    send both answer tokens and source metadata.
     """
 
     config = get_graph_config(thread_id)
 
+    final_state = None
+
     # =====================================================
-    # Execute graph exactly once
+    # Run graph until compression
     # =====================================================
 
-    result = graph.invoke(
+    for state in graph.stream(
         {
             "question": question,
             "request_id": thread_id,
         },
         config=config,
-    )
+        stream_mode="values",
+    ):
+        final_state = state
+
+        # Stop before normal LLM node generates
+        # the complete answer.
+        if state.get("stage") == "compression":
+            break
+
+        # Direct-response path such as greeting/smalltalk
+        # does not go through compression.
+        if state.get("stage") == "response":
+            answer = str(
+                state.get("answer", "")
+            ).strip()
+
+            sources = state.get(
+                "retrieval_sources",
+                [],
+            )
+
+            yield {
+                "type": "sources",
+                "sources": sources,
+            }
+
+            if answer:
+                yield {
+                    "type": "token",
+                    "content": answer,
+                }
+
+            yield {
+                "type": "done",
+            }
+
+            return
 
     # =====================================================
-    # Get final answer
+    # Safety check
     # =====================================================
 
-    answer = result.get(
-        "answer",
-        "",
-    )
-
-    if not answer:
-        answer = (
-            "I couldn't generate an answer from "
-            "the uploaded documents."
-        )
-
-    answer = str(answer).strip()
-
-    if not answer:
+    if not final_state:
+        yield {
+            "type": "error",
+            "content": (
+                "I couldn't generate an answer from "
+                "the uploaded documents."
+            ),
+        }
         return
 
     # =====================================================
-    # Stream answer in small chunks
+    # Get retrieval sources
     # =====================================================
-    #
-    # This gives the API streaming behaviour without
-    # executing the LangGraph or LLM twice.
-    #
 
-    chunk_size = 40
+    sources = final_state.get(
+        "retrieval_sources",
+        [],
+    )
 
-    for start in range(
-        0,
-        len(answer),
-        chunk_size,
-    ):
-        yield answer[
-            start:start + chunk_size
-        ]
+    yield {
+        "type": "sources",
+        "sources": sources,
+    }
+
+    # =====================================================
+    # Get RAG context
+    # =====================================================
+
+    context = final_state.get(
+        "compressed_context",
+        "",
+    )
+
+    retrieved_chunks = final_state.get(
+        "retrieved_chunks",
+        [],
+    )
+
+    history = final_state.get(
+        "history",
+        [],
+    )
+
+    # =====================================================
+    # No retrieved information
+    # =====================================================
+
+    if not retrieved_chunks or not context:
+        answer = (
+            "I couldn't find that information in "
+            "the uploaded documents."
+        )
+
+        yield {
+            "type": "token",
+            "content": answer,
+        }
+
+        yield {
+            "type": "done",
+        }
+
+        return
+
+    # =====================================================
+    # True Ollama token streaming
+    # =====================================================
+
+    try:
+        for token in generate_answer_stream(
+            question=question,
+            context=context,
+            history=history,
+        ):
+            yield {
+                "type": "token",
+                "content": token,
+            }
+
+    except Exception:
+        yield {
+            "type": "error",
+            "content": (
+                "I couldn't generate an answer from "
+                "the uploaded documents."
+            ),
+        }
+
+        return
+
+    # =====================================================
+    # Streaming completed
+    # =====================================================
+
+    yield {
+        "type": "done",
+    }

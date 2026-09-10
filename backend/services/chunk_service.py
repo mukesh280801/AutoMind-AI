@@ -1,11 +1,27 @@
 def split_text(text: str, chunk_size: int = 500):
-    """
-    Split text into fixed-size chunks.
-    """
-
     chunks = []
 
-    for i in range(0, len(text), chunk_size):
-        chunks.append(text[i:i + chunk_size])
+    # Split primarily by sections/paragraphs instead of
+    # cutting blindly at every N characters.
+    sections = text.split("\n")
+
+    current_chunk = ""
+
+    for section in sections:
+        section = section.strip()
+
+        if not section:
+            continue
+
+        if len(current_chunk) + len(section) + 1 <= chunk_size:
+            current_chunk += section + "\n"
+        else:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+
+            current_chunk = section + "\n"
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
 
     return chunks

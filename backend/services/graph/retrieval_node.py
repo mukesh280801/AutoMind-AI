@@ -4,14 +4,10 @@ from services.graph.state import AutoMindState
 from services.logging_service import get_logger
 
 
-logger = get_logger(
-    "automind.graph.retrieval"
-)
+logger = get_logger("automind.graph.retrieval")
 
 
-def retrieval_node(
-    state: AutoMindState,
-) -> AutoMindState:
+def retrieval_node(state: AutoMindState) -> AutoMindState:
 
     rewritten_question = state.get(
         "rewritten_question",
@@ -35,23 +31,13 @@ def retrieval_node(
         rewritten_question,
     )
 
-    # =========================================================
-    # TOP K
-    # =========================================================
-
-    top_k = get_top_k(
-        intent
-    )
+    top_k = get_top_k(intent)
 
     logger.info(
         "stage=retrieval | request_id=%s | top_k=%d",
         request_id,
         top_k,
     )
-
-    # =========================================================
-    # SEARCH
-    # =========================================================
 
     try:
 
@@ -72,16 +58,14 @@ def retrieval_node(
             **state,
             "retrieved_chunks": [],
             "retrieval_scores": [],
+            "retrieval_sources": [],
             "retrieval_found": False,
             "stage": "retrieval",
         }
 
-    # =========================================================
-    # EXTRACT CHUNKS
-    # =========================================================
-
     retrieved_chunks = []
     retrieval_scores = []
+    retrieval_sources = []
 
     for result in results:
 
@@ -99,6 +83,16 @@ def retrieval_node(
             result.score
         )
 
+        filename = payload.get(
+            "filename",
+            "unknown",
+        )
+
+        chunk_id = payload.get(
+            "chunk_id",
+            None,
+        )
+
         retrieved_chunks.append(
             text
         )
@@ -107,10 +101,20 @@ def retrieval_node(
             score
         )
 
+        retrieval_sources.append(
+            {
+                "filename": filename,
+                "chunk_id": chunk_id,
+                "score": score,
+            }
+        )
+
         logger.info(
-            "stage=retrieval | request_id=%s | score=%.4f",
+            "stage=retrieval | request_id=%s | score=%.4f | filename=%s | chunk_id=%s",
             request_id,
             score,
+            filename,
+            chunk_id,
         )
 
     retrieval_found = (
@@ -118,26 +122,18 @@ def retrieval_node(
     )
 
     logger.info(
-        "stage=retrieval | request_id=%s | chunks=%d | found=%s",
+        "stage=retrieval | request_id=%s | chunks=%d | sources=%d | found=%s",
         request_id,
         len(retrieved_chunks),
+        len(retrieval_sources),
         retrieval_found,
     )
 
     return {
         **state,
-
-        "retrieved_chunks": (
-            retrieved_chunks
-        ),
-
-        "retrieval_scores": (
-            retrieval_scores
-        ),
-
-        "retrieval_found": (
-            retrieval_found
-        ),
-
+        "retrieved_chunks": retrieved_chunks,
+        "retrieval_scores": retrieval_scores,
+        "retrieval_sources": retrieval_sources,
+        "retrieval_found": retrieval_found,
         "stage": "retrieval",
     }

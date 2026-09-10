@@ -1,27 +1,26 @@
 def compress_context(question: str, chunks: list[str]) -> str:
     """
-    Compress retrieved context while preserving relevant information.
+    Compress and organize retrieved context.
 
-    Strategy:
-    1. Keep chunks that contain important query keywords.
-    2. Always preserve the first relevant chunks.
-    3. Avoid overly aggressive sentence filtering.
-    4. Fall back to the original retrieved context when necessary.
+    For broad list/section queries, preserve all retrieved chunks
+    because coverage is more important than aggressive filtering.
+
+    For normal queries, rank chunks using simple keyword overlap
+    while still preserving all retrieved information.
     """
 
     if not chunks:
         return ""
 
-    question_words = set(
+    question_words = {
         word.lower().strip(".,?!:;()[]{}")
         for word in question.split()
         if len(word.strip(".,?!:;()[]{}")) > 2
-    )
+    }
 
     scored_chunks = []
 
-    for chunk in chunks:
-
+    for index, chunk in enumerate(chunks):
         chunk_lower = chunk.lower()
 
         score = sum(
@@ -31,24 +30,34 @@ def compress_context(question: str, chunks: list[str]) -> str:
         )
 
         scored_chunks.append(
-            (score, chunk)
+            (score, index, chunk)
         )
 
-    # Sort by relevance
-    scored_chunks.sort(
-        key=lambda item: item[0],
-        reverse=True
+    question_lower = question.lower()
+
+    is_list_query = (
+        "what projects" in question_lower
+        or "which projects" in question_lower
+        or "list the projects" in question_lower
+        or "projects has" in question_lower
+        or "projects did" in question_lower
     )
 
-    # Keep all retrieved chunks.
-    # Retrieval has already selected relevant information,
-    # so compression should not aggressively delete context.
-    selected_chunks = [
-        chunk
-        for score, chunk in scored_chunks
-    ]
+    if is_list_query:
+        # Preserve retrieval order for broad list queries.
+        # This prevents important project chunks from being
+        # buried by keyword reordering.
+        selected_chunks = chunks
 
-    # Join the retrieved context
-    context = "\n\n".join(selected_chunks)
+    else:
+        # Rank normal queries by keyword relevance.
+        scored_chunks.sort(
+            key=lambda item: (-item[0], item[1])
+        )
 
-    return context
+        selected_chunks = [
+            chunk
+            for score, index, chunk in scored_chunks
+        ]
+
+    return "\n\n".join(selected_chunks)

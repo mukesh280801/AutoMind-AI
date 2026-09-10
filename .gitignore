@@ -49,3 +49,6 @@ backend/stream_test.json
 
 # Local project/reference document
 AutoMind AI.docx
+
+# Evaluation artifacts
+backend/evaluation_results.json
