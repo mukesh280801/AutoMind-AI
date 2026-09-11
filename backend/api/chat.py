@@ -1,15 +1,6 @@
-import json
-
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
-
-from services.logging_service import get_logger
-
-
-# =========================================================
-# V1 IMPORTS
-# =========================================================
+from pydantic import BaseModel, Field
 
 from services.chat_orchestrator import process_chat
 from services.llm_service import generate_answer_stream
@@ -17,115 +8,138 @@ from services.memory_service import (
     get_history,
     add_message
 )
-
 from services.intent_service import detect_intent
 from services.retrieval_service import get_top_k
 from services.query_rewrite_service import rewrite_question
 from services.search_service import search_documents
 from services.compression_service import compress_context
 
+from services.logging_service import get_logger
 
-# =========================================================
-# V2 IMPORTS
-# =========================================================
-
-from services.graph.chat_service import (
-    process_graph_chat,
-    stream_graph_chat
-)
-
-
-# =========================================================
-# LOGGER
-# =========================================================
-
-logger = get_logger("automind.api.chat")
-
-
-# =========================================================
-# ROUTER
-# =========================================================
 
 router = APIRouter()
 
+logger = get_logger("chat_api")
 
-# =========================================================
-# REQUEST MODELS
-# =========================================================
 
 class ChatRequest(BaseModel):
-    question: str = Field(
-        ...,
-        min_length=1,
-        max_length=2000
-    )
-
-
-class V2ChatRequest(BaseModel):
-    question: str = Field(
-        ...,
-        min_length=1,
-        max_length=2000
-    )
-
-    thread_id: str = Field(
-        default="default",
-        min_length=1,
-        max_length=200
-    )
+    question: str = Field(..., min_length=1)
 
 
 # =========================================================
-# V1 - NORMAL CHAT
+# Normal Chat
 # =========================================================
 
 @router.post("/api/chat")
 async def chat(request: ChatRequest):
 
+    question = request.question.strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty."
+        )
+
+    logger.info(
+        "Chat request received: %s",
+        question
+    )
+
     try:
 
+        response = process_chat(question)
+
         logger.info(
-            "V1 chat request: %s",
-            request.question
+            "Chat request completed successfully"
         )
 
-        result = process_chat(
-            request.question
-        )
+        return response
 
-        return result
-
-    except Exception as exc:
+    except Exception as e:
 
         logger.exception(
-            "V1 chat failed"
+            "Chat request failed: %s",
+            str(e)
         )
 
         raise HTTPException(
             status_code=500,
-            detail="AutoMind AI failed to process the request."
-        ) from exc
+            detail="AutoMind AI failed to process the question."
+        )
 
 
 # =========================================================
-# V1 - STREAMING CHAT
+# Streaming Chat
 # =========================================================
 
 @router.post("/api/chat/stream")
 async def stream_chat(request: ChatRequest):
 
-    try:
+    question = request.question.strip()
 
-        intent = detect_intent(
-            request.question
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty."
         )
 
-        top_k = get_top_k(
+    logger.info(
+        "Streaming chat request received: %s",
+        question
+    )
+
+    try:
+
+        intent = detect_intent(question)
+
+        logger.info(
+            "Streaming intent detected: %s",
             intent
         )
 
+        # -------------------------------------------------
+        # Greeting / Small Talk
+        # -------------------------------------------------
+
+        if intent == "greeting":
+
+            def greeting_stream():
+
+                yield (
+                    "Hello! 👋 I am AutoMind AI. "
+                    "How can I help you today?"
+                )
+
+            return StreamingResponse(
+                greeting_stream(),
+                media_type="text/plain"
+            )
+
+        if intent == "smalltalk":
+
+            def smalltalk_stream():
+
+                yield "You're welcome! 😊"
+
+            return StreamingResponse(
+                smalltalk_stream(),
+                media_type="text/plain"
+            )
+
+        # -------------------------------------------------
+        # Retrieval
+        # -------------------------------------------------
+
+        top_k = get_top_k(intent)
+
         rewritten_question = rewrite_question(
-            request.question
+            question
+        )
+
+        logger.info(
+            "Streaming rewritten question: %s",
+            rewritten_question
         )
 
         results = search_documents(
@@ -133,204 +147,108 @@ async def stream_chat(request: ChatRequest):
             limit=top_k
         )
 
-        top_chunks = [
-            result.payload["text"]
-            for result in results
-        ]
+        logger.info(
+            "Streaming retrieval returned %d chunks",
+            len(results)
+        )
+
+        # -------------------------------------------------
+        # Extract chunks safely
+        # -------------------------------------------------
+
+        top_chunks = []
+
+        for result in results:
+
+            if result.payload and "text" in result.payload:
+
+                top_chunks.append(
+                    result.payload["text"]
+                )
+
+        # -------------------------------------------------
+        # Context Compression
+        # -------------------------------------------------
 
         compressed_context = compress_context(
             rewritten_question,
             top_chunks
         )
 
+        logger.info(
+            "Streaming context prepared: %d characters",
+            len(compressed_context)
+        )
+
+        # -------------------------------------------------
+        # Conversation history
+        # -------------------------------------------------
+
         history = get_history()
 
-    except Exception as exc:
+        # -------------------------------------------------
+        # Generate stream
+        # -------------------------------------------------
 
-        logger.exception(
-            "V1 streaming preparation failed"
-        )
+        def stream():
 
-        raise HTTPException(
-            status_code=500,
-            detail="AutoMind AI failed to prepare the request."
-        ) from exc
+            full_answer = ""
 
+            try:
 
-    def stream():
+                for token in generate_answer_stream(
+                    question=question,
+                    context=compressed_context,
+                    history=history
+                ):
 
-        full_answer = ""
+                    full_answer += token
 
-        try:
+                    yield token
 
-            for token in generate_answer_stream(
-                question=request.question,
-                context=compressed_context,
-                history=history
-            ):
+                # -----------------------------------------
+                # Save conversation
+                # -----------------------------------------
 
-                full_answer += token
+                add_message(
+                    "user",
+                    question
+                )
 
-                yield token
+                add_message(
+                    "assistant",
+                    full_answer
+                )
 
+                logger.info(
+                    "Streaming response completed successfully"
+                )
 
-            add_message(
-                "user",
-                request.question
-            )
+            except Exception as e:
 
-            add_message(
-                "assistant",
-                full_answer
-            )
-
-            logger.info(
-                "V1 streaming completed"
-            )
-
-        except Exception:
-
-            logger.exception(
-                "V1 streaming generation failed"
-            )
-
-            yield (
-                "\n\n"
-                "[AutoMind AI error: "
-                "response generation failed.]"
-            )
-
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/plain"
-    )
-
-
-# =========================================================
-# V2 - LANGGRAPH CHAT
-# =========================================================
-
-@router.post("/api/v2/chat")
-async def chat_v2(request: V2ChatRequest):
-
-    try:
-
-        logger.info(
-            "V2 chat request | thread=%s",
-            request.thread_id
-        )
-
-        result = process_graph_chat(
-            question=request.question,
-            thread_id=request.thread_id
-        )
-
-        return {
-            "version": "v2",
-            "thread_id": request.thread_id,
-            "question": request.question,
-            "intent": result.get("intent"),
-            "answer": result.get(
-                "answer",
-                ""
-            ),
-            "sources": result.get(
-                "retrieval_sources",
-                []
-            )
-        }
-
-    except Exception as exc:
-
-        logger.exception(
-            "V2 chat failed | thread=%s",
-            request.thread_id
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail="AutoMind AI failed to process the V2 request."
-        ) from exc
-
-
-# =========================================================
-# V2 - LANGGRAPH TRUE STREAMING CHAT
-# =========================================================
-
-@router.post("/api/v2/chat/stream")
-async def stream_chat_v2(request: V2ChatRequest):
-
-    logger.info(
-        "V2 streaming request | thread=%s",
-        request.thread_id
-    )
-
-
-    def stream():
-
-        try:
-
-            # =================================================
-            # Get events from LangGraph streaming service
-            # =================================================
-
-            for event in stream_graph_chat(
-                question=request.question,
-                thread_id=request.thread_id
-            ):
-
-                # =============================================
-                # Convert Python dictionary into NDJSON
-                # =============================================
+                logger.exception(
+                    "Streaming generation failed: %s",
+                    str(e)
+                )
 
                 yield (
-                    json.dumps(
-                        event,
-                        ensure_ascii=False
-                    )
-                    + "\n"
+                    "\n\n[AutoMind AI encountered an error "
+                    "while generating the response.]"
                 )
 
+        return StreamingResponse(
+            stream(),
+            media_type="text/plain"
+        )
 
-            logger.info(
-                "V2 streaming completed | thread=%s",
-                request.thread_id
-            )
+    except Exception as e:
 
+        logger.exception(
+            "Streaming chat request failed: %s",
+            str(e)
+        )
 
-        except Exception:
-
-            logger.exception(
-                "V2 streaming failed | thread=%s",
-                request.thread_id
-            )
-
-
-            # =============================================
-            # Send error as NDJSON event
-            # =============================================
-
-            yield (
-                json.dumps(
-                    {
-                        "type": "error",
-                        "content": (
-                            "AutoMind AI failed "
-                            "to generate the response."
-                        )
-                    },
-                    ensure_ascii=False
-                )
-                + "\n"
-            )
-
-
-    # =====================================================
-    # Return NDJSON streaming response
-    # =====================================================
-
-    return StreamingResponse(
-        stream(),
-        media_type="application/x-ndjson"
-    )
+        raise HTTPException(
+            status_code=500,
+            detail="AutoMind AI failed to process the streaming request."
+        )

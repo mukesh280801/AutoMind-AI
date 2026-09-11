@@ -22,6 +22,8 @@ model = SentenceTransformer(
     "all-MiniLM-L6-v2"
 )
 
+
+# Minimum semantic similarity score
 MIN_SCORE = 0.10
 
 
@@ -33,11 +35,28 @@ def search_documents(
     query: str,
     limit: int = DEFAULT_TOP_K,
 ):
+    """
+    Search uploaded documents from Qdrant.
+
+    Automotive queries:
+        - Search broadly across automotive documents.
+        - Resume is excluded.
+
+    List/project queries:
+        - Retrieve more chunks for better coverage.
+
+    Normal queries:
+        - Use semantic similarity filtering.
+    """
 
     query = query.strip()
 
     if not query:
         return []
+
+    # --------------------------------------------------------
+    # Create query embedding
+    # --------------------------------------------------------
 
     query_embedding = model.encode(
         query
@@ -45,34 +64,11 @@ def search_documents(
 
     query_lower = query.lower()
 
-
     # ========================================================
     # QUERY TYPE DETECTION
     # ========================================================
 
-    # --------------------------------------------------------
-    # Automotive-specific queries
-    # --------------------------------------------------------
-
-    is_automotive_query = (
-        "bluetooth" in query_lower
-        or "can bus" in query_lower
-        or "can network" in query_lower
-        or "controller area network" in query_lower
-        or "1 mbit/s" in query_lower
-        or "bit rate" in query_lower
-        or "bus length" in query_lower
-        or "automotive applications" in query_lower
-        or "automotive document" in query_lower
-        or "wireless technology" in query_lower
-        or "car production" in query_lower
-    )
-
-
-    # --------------------------------------------------------
-    # Project-list queries
-    # --------------------------------------------------------
-
+    # Broad list / project questions need more chunks
     is_list_query = (
         "what projects" in query_lower
         or "which projects" in query_lower
@@ -81,116 +77,75 @@ def search_documents(
         or "projects did" in query_lower
     )
 
-
-    # --------------------------------------------------------
-    # Broad knowledge queries
-    # --------------------------------------------------------
-
-    is_broad_knowledge_query = (
-        "what kind of information" in query_lower
-        or "what information can automind ai retrieve" in query_lower
-        or "what information can automind" in query_lower
-        or "what information is available" in query_lower
-        or "what information is contained" in query_lower
-        or "what information do the documents contain" in query_lower
-        or "what topics are covered" in query_lower
+    # Automotive-related questions
+    #
+    # Important:
+    # Do NOT hardcode one specific automotive PDF.
+    # Any uploaded automotive document should be searchable.
+    #
+    is_automotive_query = (
+        "automotive" in query_lower
+        or "bluetooth" in query_lower
+        or "can" in query_lower
+        or "can bus" in query_lower
+        or "can network" in query_lower
+        or "controller area network" in query_lower
+        or "bit rate" in query_lower
+        or "mbit/s" in query_lower
+        or "kbit/s" in query_lower
+        or "bus length" in query_lower
+        or "vehicle" in query_lower
+        or "ecu" in query_lower
+        or "diagnostic" in query_lower
+        or "diagnostics" in query_lower
+        or "adas" in query_lower
+        or "radar" in query_lower
+        or "camera" in query_lower
+        or "powertrain" in query_lower
+        or "brake" in query_lower
+        or "engine" in query_lower
+        or "automotive applications" in query_lower
+        or "automotive document" in query_lower
+        or "wireless technology" in query_lower
+        or "car production" in query_lower
     )
 
-
-    # --------------------------------------------------------
-    # Resume-specific queries
-    # --------------------------------------------------------
-
-    resume_keywords = [
-        "resume",
-        "cv",
-        "dice score",
-        "iou score",
-        "attention u-net",
-        "attention unet",
-        "brain tumor",
-        "lung disease",
-        "f1-score",
-        "f1 score",
-        "adas project",
-        "risk engine",
-        "driving alerts",
-        "developer",
-        "education",
-        "certification",
-        "certifications",
-        "professional summary",
-        "technical skills",
-    ]
-
-    is_resume_query = any(
-        keyword in query_lower
-        for keyword in resume_keywords
-    )
-
-
     # ========================================================
-    # BROAD KNOWLEDGE SEARCH
-    # ========================================================
-
-    if is_broad_knowledge_query:
-
-        response = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_embedding,
-            limit=100,
-            with_payload=True,
-        )
-
-        return list(
-            response.points
-        )
-
-
-    # ========================================================
-    # PROJECT LIST SEARCH
+    # RETRIEVAL LIMIT
     # ========================================================
 
     if is_list_query:
+        retrieval_limit = 100
 
-        response = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_embedding,
-            limit=100,
-            with_payload=True,
-        )
+    elif is_automotive_query:
+        # Search wider so relevant automotive chunks
+        # from multiple automotive PDFs can be found.
+        retrieval_limit = max(100, limit)
 
-        resume_results = []
-
-        for result in response.points:
-
-            payload = result.payload or {}
-
-            if payload.get("filename") != "Mukesh_VIT_Resume.pdf":
-                continue
-
-            if float(result.score) < MIN_SCORE:
-                continue
-
-            resume_results.append(
-                result
-            )
-
-        return resume_results
-
+    else:
+        retrieval_limit = limit
 
     # ========================================================
-    # AUTOMOTIVE DOCUMENT SEARCH
+    # QDRANT SEARCH
+    # ========================================================
+
+    response = client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_embedding,
+        limit=retrieval_limit,
+        with_payload=True,
+    )
+
+    print(
+        "RAW QDRANT COUNT:",
+        len(response.points),
+    )
+
+    # ========================================================
+    # AUTOMOTIVE SEARCH
     # ========================================================
 
     if is_automotive_query:
-
-        response = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_embedding,
-            limit=100,
-            with_payload=True,
-        )
 
         automotive_results = []
 
@@ -198,12 +153,33 @@ def search_documents(
 
             payload = result.payload or {}
 
-            if payload.get("filename") != (
-                "bluetooth-in-automotive-appl.pdf"
-            ):
+            filename = payload.get(
+                "filename",
+                "",
+            )
+
+            score = float(
+                result.score
+            )
+
+            print(
+                "AUTOMOTIVE SCORE:",
+                filename,
+                round(score, 4),
+            )
+
+            # ------------------------------------------------
+            # Exclude resume from automotive retrieval
+            # ------------------------------------------------
+
+            if filename == "Mukesh_VIT_Resume.pdf":
                 continue
 
-            if float(result.score) < MIN_SCORE:
+            # ------------------------------------------------
+            # Apply minimum similarity score
+            # ------------------------------------------------
+
+            if score < MIN_SCORE:
                 continue
 
             automotive_results.append(
@@ -212,51 +188,23 @@ def search_documents(
 
         return automotive_results[:limit]
 
-
     # ========================================================
-    # RESUME DOCUMENT SEARCH
+    # LIST / PROJECT QUERY
     # ========================================================
 
-    if is_resume_query:
+    if is_list_query:
 
-        response = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_embedding,
-            limit=100,
-            with_payload=True,
+        # List queries need wider coverage.
+        # Keep all retrieved chunks.
+        results = list(
+            response.points
         )
 
-        resume_results = []
-
-        for result in response.points:
-
-            payload = result.payload or {}
-
-            if payload.get("filename") != (
-                "Mukesh_VIT_Resume.pdf"
-            ):
-                continue
-
-            if float(result.score) < MIN_SCORE:
-                continue
-
-            resume_results.append(
-                result
-            )
-
-        return resume_results[:limit]
-
+        return results[:retrieval_limit]
 
     # ========================================================
-    # GENERAL SEARCH
+    # NORMAL SEMANTIC SEARCH
     # ========================================================
-
-    response = client.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_embedding,
-        limit=limit,
-        with_payload=True,
-    )
 
     results = [
         result

@@ -15,14 +15,19 @@ type Message = {
   sources?: Source[];
 };
 
+type ChatResponse = {
+  version: string;
+  thread_id: string;
+  question: string;
+  intent: string;
+  answer: string;
+  sources: Source[];
+};
+
 function Chat() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // =====================================================
-  // Persistent LangGraph thread ID
-  // =====================================================
 
   const [threadId] = useState(() => {
     const existingThreadId =
@@ -43,20 +48,12 @@ function Chat() {
     return newThreadId;
   });
 
-  // =====================================================
-  // Send message
-  // =====================================================
-
   async function sendMessage() {
     const trimmed = question.trim();
 
     if (!trimmed || loading) {
       return;
     }
-
-    // ===================================================
-    // Add user message
-    // ===================================================
 
     setMessages((prev) => [
       ...prev,
@@ -69,26 +66,9 @@ function Chat() {
     setQuestion("");
     setLoading(true);
 
-    // ===================================================
-    // Add empty assistant message
-    // ===================================================
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "assistant",
-        content: "",
-        sources: [],
-      },
-    ]);
-
     try {
-      // =================================================
-      // Call V2 streaming endpoint
-      // =================================================
-
       const response = await fetch(
-        `${BASE_URL}/api/v2/chat/stream`,
+        `${BASE_URL}/api/v2/chat`,
         {
           method: "POST",
           headers: {
@@ -107,235 +87,40 @@ function Chat() {
         );
       }
 
-      if (!response.body) {
-        throw new Error(
-          "Streaming response body is unavailable."
-        );
-      }
+      const data: ChatResponse =
+        await response.json();
 
-      // =================================================
-      // Read NDJSON stream
-      // =================================================
-
-      const reader =
-        response.body.getReader();
-
-      const decoder =
-        new TextDecoder();
-
-      let buffer = "";
-
-      while (true) {
-        const { value, done } =
-          await reader.read();
-
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(
-          value,
-          {
-            stream: true,
-          }
-        );
-
-        const lines =
-          buffer.split("\n");
-
-        // Keep incomplete line
-        buffer =
-          lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) {
-            continue;
-          }
-
-          processStreamEvent(line);
-        }
-      }
-
-      // =================================================
-      // Process remaining buffered data
-      // =================================================
-
-      buffer += decoder.decode();
-
-      if (buffer.trim()) {
-        processStreamEvent(buffer);
-      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            data.answer ||
+            "I couldn't find that information in the uploaded documents.",
+          sources: data.sources || [],
+        },
+      ]);
 
     } catch (error) {
       console.error(
-        "Streaming chat error:",
+        "Chat request error:",
         error
       );
 
-      setMessages((prev) => {
-        const updated = [...prev];
-
-        const lastIndex =
-          updated.length - 1;
-
-        if (
-          updated[lastIndex] &&
-          updated[lastIndex].role ===
-            "assistant"
-        ) {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content:
-              "Sorry, something went wrong while contacting AutoMind AI.",
-          };
-        }
-
-        return updated;
-      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content:
+            "Sorry, something went wrong while contacting AutoMind AI.",
+          sources: [],
+        },
+      ]);
 
     } finally {
       setLoading(false);
     }
   }
-
-  // =====================================================
-  // Process one NDJSON event
-  // =====================================================
-
-  function processStreamEvent(
-    line: string
-  ) {
-    try {
-      const event =
-        JSON.parse(line);
-
-      // =================================================
-      // Sources event
-      // =================================================
-
-      if (
-        event.type === "sources"
-      ) {
-        const sources: Source[] =
-          event.sources || [];
-
-        setMessages((prev) => {
-          const updated = [...prev];
-
-          const lastIndex =
-            updated.length - 1;
-
-          if (
-            updated[lastIndex] &&
-            updated[lastIndex].role ===
-              "assistant"
-          ) {
-            updated[lastIndex] = {
-              ...updated[lastIndex],
-              sources,
-            };
-          }
-
-          return updated;
-        });
-
-        return;
-      }
-
-      // =================================================
-      // Token event
-      // =================================================
-
-      if (
-        event.type === "token"
-      ) {
-        const token =
-          event.content || "";
-
-        if (!token) {
-          return;
-        }
-
-        setMessages((prev) => {
-          const updated = [...prev];
-
-          const lastIndex =
-            updated.length - 1;
-
-          if (
-            updated[lastIndex] &&
-            updated[lastIndex].role ===
-              "assistant"
-          ) {
-            updated[lastIndex] = {
-              ...updated[lastIndex],
-              content:
-                updated[lastIndex].content +
-                token,
-            };
-          }
-
-          return updated;
-        });
-
-        return;
-      }
-
-      // =================================================
-      // Done event
-      // =================================================
-
-      if (
-        event.type === "done"
-      ) {
-        return;
-      }
-
-      // =================================================
-      // Error event
-      // =================================================
-
-      if (
-        event.type === "error"
-      ) {
-        const errorMessage =
-          event.content ||
-          "AutoMind AI failed to generate the response.";
-
-        setMessages((prev) => {
-          const updated = [...prev];
-
-          const lastIndex =
-            updated.length - 1;
-
-          if (
-            updated[lastIndex] &&
-            updated[lastIndex].role ===
-              "assistant"
-          ) {
-            updated[lastIndex] = {
-              ...updated[lastIndex],
-              content: errorMessage,
-            };
-          }
-
-          return updated;
-        });
-
-        return;
-      }
-
-    } catch (parseError) {
-      console.error(
-        "Stream JSON parse error:",
-        parseError
-      );
-    }
-  }
-
-  // =====================================================
-  // Enter key handling
-  // =====================================================
 
   function handleKeyDown(
     event: React.KeyboardEvent<HTMLTextAreaElement>
@@ -345,217 +130,449 @@ function Chat() {
       !event.shiftKey
     ) {
       event.preventDefault();
-
       sendMessage();
     }
   }
 
-  // =====================================================
-  // UI
-  // =====================================================
-
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="min-h-screen text-slate-900">
 
       <Navbar />
 
-      <div className="mx-auto flex max-w-5xl flex-col px-6 py-10">
+      <main className="relative h-[calc(100vh-64px)] overflow-hidden">
 
-        {/* =================================================
-            Header
-        ================================================= */}
+        {/* Background */}
+        <div
+          className="absolute inset-0 bg-cover bg-center"
+          style={{
+            backgroundImage:
+              "url('/images/chat-engineering.jpg')",
+          }}
+        />
 
-        <div className="mb-8">
+        <div className="relative h-full overflow-hidden">
 
-          <h1 className="text-4xl font-bold text-cyan-400">
-            AutoMind AI
-          </h1>
+          <div className="max-w-7xl mx-auto h-full px-4 py-3">
 
-          <p className="mt-2 text-slate-400">
-            Ask questions about your uploaded documents.
-          </p>
+            {/* ================================================= */}
+            {/* HEADER */}
+            {/* ================================================= */}
 
-        </div>
+            <div className="flex items-center justify-between mb-3">
 
-        {/* =================================================
-            Chat Area
-        ================================================= */}
+              <div className="bg-white rounded-xl px-4 py-2 shadow-lg">
 
-        <div className="min-h-[500px] rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+                <div className="flex items-center gap-2">
 
-          <div className="space-y-5">
+                  <span className="h-2 w-2 rounded-full bg-green-500" />
 
-            {/* =================================================
-                Empty State
-            ================================================= */}
+                  <div>
+                    <h1 className="text-xl md:text-2xl font-bold">
+                      AutoMind AI
+                    </h1>
 
-            {messages.length === 0 && (
-              <div className="flex min-h-[400px] items-center justify-center text-center text-slate-500">
-
-                <div>
-
-                  <p className="text-xl">
-                    Ask AutoMind AI something.
-                  </p>
-
-                  <p className="mt-2 text-sm">
-                    Try: "What is the maximum CAN bus length at 1 Mbit/s?"
-                  </p>
+                    <p className="text-[10px] text-slate-500">
+                      Automotive engineering knowledge assistant
+                    </p>
+                  </div>
 
                 </div>
 
               </div>
-            )}
 
-            {/* =================================================
-                Messages
-            ================================================= */}
+              <div className="bg-white rounded-xl px-3 py-2 shadow-lg">
 
-            {messages.map(
-              (message, index) => (
-                <div
-                  key={index}
-                  className={
-                    message.role === "user"
-                      ? "ml-auto max-w-[80%] rounded-2xl bg-cyan-500/20 p-4"
-                      : "mr-auto max-w-[80%] rounded-2xl bg-slate-800 p-4"
-                  }
-                >
+                <div className="flex items-center gap-2">
 
-                  {/* Message role */}
+                  <span className="h-2 w-2 rounded-full bg-green-500" />
 
-                  <div className="mb-1 text-xs font-semibold uppercase text-slate-400">
+                  <span className="text-[10px] font-semibold text-slate-600">
+                    KNOWLEDGE BASE READY
+                  </span>
 
-                    {message.role === "user"
-                      ? "You"
-                      : "AutoMind AI"}
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* ================================================= */}
+            {/* WORKSPACE */}
+            {/* ================================================= */}
+
+            <div className="grid lg:grid-cols-[1fr_235px] gap-3 h-[calc(100%-68px)]">
+
+              {/* ================================================= */}
+              {/* CHAT PANEL */}
+              {/* ================================================= */}
+
+              <section className="bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col min-h-0">
+
+                {/* Chat Header */}
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+
+                  <div className="flex items-center gap-2">
+
+                    <div className="h-8 w-8 rounded-lg bg-cyan-50 text-cyan-600 flex items-center justify-center">
+                      ✦
+                    </div>
+
+                    <div>
+
+                      <h2 className="text-sm font-bold">
+                        Engineering Assistant
+                      </h2>
+
+                      <p className="text-[10px] text-slate-400">
+                        Grounded responses from uploaded documents
+                      </p>
+
+                    </div>
 
                   </div>
 
-                  {/* Message content */}
-
-                  <div className="whitespace-pre-wrap leading-7">
-
-                    {message.content}
-
-                    {message.role === "assistant" &&
-                      loading &&
-                      index ===
-                        messages.length - 1 && (
-                        <span className="ml-1 animate-pulse">
-                          ▋
-                        </span>
-                      )}
-
+                  <div className="text-[9px] font-bold text-green-600">
+                    ● RAG ACTIVE
                   </div>
 
-                  {/* =================================================
-                      Sources
-                  ================================================= */}
+                </div>
 
-                  {message.role === "assistant" &&
-                    message.sources &&
-                    message.sources.length > 0 && (
+                {/* ================================================= */}
+                {/* MESSAGES */}
+                {/* ================================================= */}
 
-                    <div className="mt-4 border-t border-slate-700 pt-3">
+                <div className="flex-1 min-h-0 overflow-y-auto p-4">
 
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-400">
-                        Sources
-                      </div>
+                  {messages.length === 0 ? (
 
-                      <div className="space-y-2">
+                    <div className="h-full flex items-center justify-center">
 
-                        {message.sources.map(
-                          (
-                            source,
-                            sourceIndex
-                          ) => (
+                      <div className="max-w-xl w-full text-center">
 
-                            <div
-                              key={`${source.filename}-${source.chunk_id}-${sourceIndex}`}
-                              className="rounded-lg bg-slate-900/70 px-3 py-2 text-sm"
+                        <div className="mx-auto h-12 w-12 rounded-xl bg-cyan-50 border border-cyan-100 flex items-center justify-center text-xl">
+                          ⚙
+                        </div>
+
+                        <h2 className="mt-3 text-lg font-bold">
+                          Ask your engineering question
+                        </h2>
+
+                        <p className="text-xs text-slate-500 mt-1 leading-5">
+                          AutoMind AI retrieves relevant technical
+                          context before generating an answer.
+                        </p>
+
+                        <div className="grid grid-cols-3 gap-2 mt-4">
+
+                          {[
+                            "What is CAN bus?",
+                            "Explain automotive Bluetooth",
+                            "Summarize the document",
+                          ].map((text) => (
+
+                            <button
+                              key={text}
+                              onClick={() =>
+                                setQuestion(text)
+                              }
+                              className="text-left px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-cyan-50 hover:border-cyan-300 transition"
                             >
 
-                              <div className="font-medium text-slate-200">
+                              <span className="text-[8px] font-bold text-cyan-600">
+                                SUGGESTED
+                              </span>
 
-                                📄{" "}
-                                {source.filename}
+                              <p className="mt-1 text-[10px] font-medium text-slate-700">
+                                {text}
+                              </p>
+
+                            </button>
+
+                          ))}
+
+                        </div>
+
+                      </div>
+
+                    </div>
+
+                  ) : (
+
+                    <div className="space-y-3">
+
+                      {messages.map(
+                        (message, index) => (
+
+                          <div
+                            key={index}
+                            className={
+                              message.role === "user"
+                                ? "flex justify-end"
+                                : "flex justify-start"
+                            }
+                          >
+
+                            <div
+                              className={
+                                message.role === "user"
+                                  ? "max-w-[78%] rounded-2xl rounded-br-md bg-cyan-600 text-white px-4 py-3"
+                                  : "max-w-[82%] rounded-2xl rounded-bl-md bg-slate-50 border border-slate-200 px-4 py-3"
+                              }
+                            >
+
+                              {/* Message Label */}
+                              <div
+                                className={
+                                  message.role === "user"
+                                    ? "mb-1 text-[8px] font-bold uppercase text-cyan-100"
+                                    : "mb-1 text-[8px] font-bold uppercase text-cyan-700"
+                                }
+                              >
+                                {message.role === "user"
+                                  ? "YOU"
+                                  : "AUTOMIND AI"}
+                              </div>
+
+                              {/* Message Content */}
+                              <div className="whitespace-pre-wrap text-sm leading-6">
+
+                                {message.content}
+
+                                {loading &&
+                                  index === messages.length - 1 &&
+                                  message.role === "user" && (
+
+                                    <span className="ml-1 animate-pulse">
+                                      ▋
+                                    </span>
+
+                                  )}
 
                               </div>
 
-                              <div className="mt-1 text-xs text-slate-500">
+                              {/* ================================================= */}
+                              {/* SOURCES */}
+                              {/* ================================================= */}
 
-                                Chunk{" "}
-                                {source.chunk_id ??
-                                  "N/A"}
+                              {message.role === "assistant" &&
+                                message.sources &&
+                                message.sources.length > 0 && (
 
-                                {" · "}
+                                  <div className="mt-3 pt-2 border-t border-slate-200">
 
-                                Score{" "}
+                                    <p className="text-[9px] font-bold text-slate-600 mb-1.5">
+                                      Retrieved Sources
+                                    </p>
 
-                                {Number(
-                                  source.score
-                                ).toFixed(3)}
+                                    <div className="space-y-1">
 
-                              </div>
+                                      {Array.from(
+                                        new Map(
+                                          message.sources.map(
+                                            (source) => [
+                                              source.filename,
+                                              source,
+                                            ]
+                                          )
+                                        ).values()
+                                      )
+                                        .slice(0, 2)
+                                        .map(
+                                          (source, sourceIndex) => (
+
+                                            <div
+                                              key={`${source.filename}-${sourceIndex}`}
+                                              className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5"
+                                            >
+
+                                              <p className="text-[9px] font-semibold text-slate-700 truncate">
+                                                📄 {source.filename}
+                                              </p>
+
+                                              <p className="text-[8px] text-slate-400">
+                                                Chunk{" "}
+                                                {source.chunk_id ??
+                                                  "N/A"}
+                                                {" · "}
+                                                Relevance{" "}
+                                                {Number(
+                                                  source.score
+                                                ).toFixed(3)}
+                                              </p>
+
+                                            </div>
+
+                                          )
+                                        )}
+
+                                    </div>
+
+                                  </div>
+
+                                )}
 
                             </div>
 
-                          )
-                        )}
+                          </div>
 
-                      </div>
+                        )
+                      )}
 
                     </div>
 
                   )}
 
                 </div>
-              )
-            )}
+
+                {/* ================================================= */}
+                {/* INPUT */}
+                {/* ================================================= */}
+
+                <div className="border-t border-slate-100 bg-slate-50 p-3">
+
+                  <div className="flex gap-2 items-end">
+
+                    <textarea
+                      value={question}
+                      onChange={(event) =>
+                        setQuestion(event.target.value)
+                      }
+                      onKeyDown={handleKeyDown}
+                      placeholder="Ask an automotive engineering question..."
+                      rows={2}
+                      disabled={loading}
+                      className="flex-1 resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:opacity-50"
+                    />
+
+                    <button
+                      onClick={sendMessage}
+                      disabled={
+                        loading ||
+                        !question.trim()
+                      }
+                      className="h-[46px] px-5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-semibold transition disabled:bg-slate-300 disabled:cursor-not-allowed"
+                    >
+                      {loading
+                        ? "..."
+                        : "Send →"}
+                    </button>
+
+                  </div>
+
+                  <p className="mt-1 text-[8px] text-slate-400">
+                    Enter to send · Shift + Enter for new line
+                  </p>
+
+                </div>
+
+              </section>
+
+              {/* ================================================= */}
+              {/* SIDEBAR */}
+              {/* ================================================= */}
+
+              <aside className="space-y-3">
+
+                {/* Knowledge Pipeline */}
+                <div className="bg-white rounded-xl p-4 shadow-lg">
+
+                  <h3 className="text-sm font-bold">
+                    Knowledge Pipeline
+                  </h3>
+
+                  <p className="text-[9px] text-slate-400 mt-1">
+                    How AutoMind processes your question.
+                  </p>
+
+                  <div className="mt-3 space-y-2.5">
+
+                    {[
+                      ["01", "Question", "User query"],
+                      ["02", "Retrieve", "Qdrant search"],
+                      ["03", "Context", "Relevant chunks"],
+                      ["04", "Generate", "Grounded AI"],
+                    ].map(
+                      ([
+                        number,
+                        title,
+                        description,
+                      ]) => (
+
+                        <div
+                          key={number}
+                          className="flex items-center gap-2"
+                        >
+
+                          <div className="h-7 w-7 rounded-lg bg-cyan-50 text-cyan-700 flex items-center justify-center text-[9px] font-bold">
+                            {number}
+                          </div>
+
+                          <div>
+
+                            <p className="text-[10px] font-semibold">
+                              {title}
+                            </p>
+
+                            <p className="text-[8px] text-slate-400">
+                              {description}
+                            </p>
+
+                          </div>
+
+                        </div>
+
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+                {/* Automotive AI Card */}
+                <div className="bg-slate-900 rounded-xl p-4 text-white shadow-lg">
+
+                  <p className="text-[8px] tracking-widest text-cyan-400 font-bold">
+                    AUTOMOTIVE AI
+                  </p>
+
+                  <h3 className="text-sm font-bold mt-2 leading-5">
+
+                    Engineering knowledge,
+
+                    <span className="block text-cyan-300">
+                      one question away.
+                    </span>
+
+                  </h3>
+
+                  <p className="text-[9px] text-slate-400 leading-4 mt-2">
+                    Retrieve technical information from uploaded
+                    documents instead of relying on unsupported answers.
+                  </p>
+
+                  <div className="mt-3 pt-2 border-t border-slate-700 flex justify-between">
+
+                    <span className="text-[8px] text-slate-500">
+                      VECTOR DATABASE
+                    </span>
+
+                    <span className="text-[8px] text-green-400 font-bold">
+                      READY
+                    </span>
+
+                  </div>
+
+                </div>
+
+              </aside>
+
+            </div>
 
           </div>
 
         </div>
 
-        {/* =================================================
-            Input
-        ================================================= */}
-
-        <div className="mt-5 flex gap-3">
-
-          <textarea
-            value={question}
-            onChange={(event) =>
-              setQuestion(
-                event.target.value
-              )
-            }
-            onKeyDown={handleKeyDown}
-            placeholder="Ask something..."
-            rows={2}
-            disabled={loading}
-            className="flex-1 resize-none rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-white outline-none focus:border-cyan-400 disabled:opacity-50"
-          />
-
-          <button
-            onClick={sendMessage}
-            disabled={
-              loading ||
-              !question.trim()
-            }
-            className="rounded-xl bg-cyan-500 px-6 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-
-            {loading
-              ? "Thinking..."
-              : "Send"}
-
-          </button>
-
-        </div>
-
-      </div>
+      </main>
 
     </div>
   );
